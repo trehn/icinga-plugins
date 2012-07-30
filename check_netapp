@@ -1,0 +1,146 @@
+#!/usr/bin/env python
+# 
+# Copyright (c) 2012, Torsten Rehn <torsten@rehn.tel>
+# 
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above 
+# copyright notice and this permission notice appear in all copies.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
+from subprocess import CalledProcessError, check_output, STDOUT
+from sys import exit
+
+OK = 0
+WARNING = 1
+CRITICAL = 2
+UNKNOWN = 3
+
+check_type_list = """
+Valid check types (and threshold defaults):
+
+  globalstatus      Global filer status
+"""
+
+community = None
+host = None
+threshold_warn = None
+threshold_crit = None
+
+oks = []
+warnings = []
+criticals = []
+
+parser = ArgumentParser(
+	prog = "check_netapp",
+	description = "Icinga/Nagios plugin to check NetApp filers via SNMP 2c",
+	epilog = check_type_list,
+	formatter_class = RawDescriptionHelpFormatter
+)
+
+parser.add_argument("host",
+	type = str,
+	metavar = "HOST",
+	help = "target hostname or IP address"
+)
+
+parser.add_argument("-s", "--community",
+	type = str,
+	metavar = "COMMUNTIY",
+	dest = "snmp_community",
+	default = "public",
+	help = "SNMP community"
+)
+
+parser.add_argument("-t", "--type",
+	type = str,
+	metavar = "TYPE",
+	dest = "check",
+	default = "globalstatus",
+	help = "check type, see below for valid options (default: 'global')"
+)
+
+parser.add_argument("-w", "--warning",
+	type = int,
+	metavar = "THRESHOLD",
+	dest = "threshold_warn"
+)
+
+parser.add_argument("-c", "--critical",
+	type = int,
+	metavar = "THRESHOLD",
+	dest = "threshold_crit"
+)
+
+def run(command):
+	try:
+		return check_output(
+			command,
+			shell = True,
+			stderr = STDOUT
+		).strip()
+	except CalledProcessError as e:
+		print("command failed: " + command)
+		print(e.output)
+		exit(UNKNOWN)
+
+def snmpindices(oid):
+	return run(
+		"snmpwalk -Oqv -v 2c -c {0} {1} {2}".format(
+			community,
+			host,
+			oid
+		)
+	).split("\n")
+
+def snmpget(*args):
+	oid = ".".join(args)
+	return run("snmpget -Oqv -v 2c -c {0} {1} {2}".format(community, host, oid))
+
+check_map = {}
+
+def check(check):
+	check_map[check.__name__] = check
+
+@check
+def globalstatus():
+	status = snmpget("1.3.6.1.4.1.789.1.2.2.4.0")
+	status_msg = snmpget("1.3.6.1.4.1.789.1.2.2.25.0").strip("\"")
+	if status == "3":
+		oks.append(status_msg)
+	elif status == "4":
+		warnings.append(status_msg)
+	else:
+		criticals.append(status_msg)
+
+if __name__ == "__main__":
+	args = parser.parse_args()
+	community = args.snmp_community
+	host = args.host
+	threshold_warn = args.threshold_warn
+	threshold_crit = args.threshold_crit
+	
+	try:
+		check_map[args.check]()
+	except KeyError:
+		print("Invalid check type: " + check)
+	
+	if criticals:
+		print("\n".join(criticals))
+		exit(OK)
+	elif warnings:
+		print("\n".join(warnings))
+		exit(OK)
+	elif oks:
+		print("\n".join(oks))
+		exit(OK)
+	else:
+		exit(UNKNOWN)
