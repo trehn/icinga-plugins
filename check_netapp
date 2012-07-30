@@ -36,6 +36,7 @@ criticals = []
 check_type_list = """
 Valid check types (and threshold defaults):
 
+  cluster           HA status
   cpu_load          CPU load percentage (w:85 c:95)
   disks             Failed disks
   fans              Failed fans
@@ -115,6 +116,38 @@ check_map = {}
 
 def check(check):
 	check_map[check.__name__] = check
+
+@check
+def cluster():
+	status = int(snmpget("1.3.6.1.4.1.789.1.2.3.2.0"))
+	if status == 1:
+		criticals.append("Node is dead")
+	elif status == 2:
+		oks.append("Node can take over")
+	elif status == 3:
+		reason_code = int(snmpget("1.3.6.1.4.1.789.1.2.3.3.0"))
+		reason_map = {
+			3: "disabled by operator",
+			4: "interconnect offline",
+			5: "disabled by partner",
+			6: "takeover failed",
+			7: "mailbox degraded",
+			8: "partner mailbox uninitialized",
+			9: "mailbox version mismatch",
+			10: "NVRAM size mismatch",
+			11: "kernel version mismatch",
+			12: "partner booting up",
+			13: "parnter performing revert",
+			14: "performing revert",
+			15: "partner requested takeover",
+			16: "already in taken over mode",
+			17: "NVRAM log unsynchronized",
+			18: "backup mailbox problems"
+		}
+		reason = reason_map.get(reason_code, "unknown reason")
+		criticals.append("Cannot take over: " + reason)
+	elif status == 4:
+		warnings.append("Takeover in effect")
 
 @check
 def cpu_load():
