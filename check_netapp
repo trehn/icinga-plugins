@@ -39,6 +39,7 @@ Valid check types (and threshold defaults):
   cpu_load          CPU load percentage (w:85 c:95)
   fans              Failed fans
   globalstatus      Global filer status
+  power             Failed power supplies
   temperature       Temperature status
 """
 
@@ -145,6 +146,15 @@ def globalstatus():
 		warnings.append(status_msg)
 	else:
 		criticals.append(status_msg)
+
+@check
+def power():
+	count = int(snmpget("1.3.6.1.4.1.789.1.2.4.4.0"))
+	msg = snmpget("1.3.6.1.4.1.789.1.2.4.5.0").strip("\"")
+	if count == 0:
+		oks.append(msg)
+	else:
+		criticals.append(msg)
 
 @check
 def temperature():
