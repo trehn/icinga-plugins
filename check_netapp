@@ -26,6 +26,7 @@ UNKNOWN = 3
 
 community = None
 host = None
+param = None
 threshold_warn = None
 threshold_crit = None
 
@@ -34,16 +35,23 @@ warnings = []
 criticals = []
 
 check_type_list = """
-Valid check types (and threshold defaults):
+valid check types (and threshold defaults):
 
   cluster           HA status
   cpu_load          CPU load percentage (w:85 c:95)
-  dedup             last SIS run status for all volumes
+  dedup             Last SIS run status for all volumes
   disks             Failed disks
   fans              Failed fans
   globalstatus      Global filer status
   nvram_battery     NVRAM battery status
   power             Failed power supplies
+  space_aggr        Free disk space in all aggregates (give aggregate name
+                    with -p to check only a single aggregate; w:85 c:95)
+  space_snap        Snapshot reserve usage for aggregates and volumes
+                    (give volume or aggregate name with -p to check only
+                    a single volume/aggregate; w:85 c:95)
+  space_vol         Free disk space in all volumes (give volume name with
+                    -p to check only a single volume; w:85 c:95)
   temperature       Temperature status
 """
 
@@ -74,6 +82,13 @@ parser.add_argument("-t", "--type",
 	dest = "check",
 	default = "globalstatus",
 	help = "check type, see below for valid options (default: 'global')"
+)
+
+parser.add_argument("-p", "--param",
+	type = str,
+	metavar = "VALUE",
+	dest = "param",
+	help = "single parameter, used by some check types"
 )
 
 parser.add_argument("-w", "--warning",
@@ -251,6 +266,55 @@ def power():
 	else:
 		criticals.append(msg)
 
+def space_check(type_filter):
+	ids = snmpindices("1.3.6.1.4.1.789.1.5.4.1.1")
+	for i in ids:
+		fstype = int(snmpget("1.3.6.1.4.1.789.1.5.4.1.23", i))
+		fsname = snmpget("1.3.6.1.4.1.789.1.5.4.1.2", i).rstrip("/")
+		msg = ""
+		if type_filter == "snapres":
+			if fsname.endswith("/.snapshot"):
+				fsname = fsname[:-10]
+				msg += "Snapshot reserve for "
+			else:
+				continue
+		else:
+			if fstype not in type_filter or fsname.endswith("/.snapshot"):
+				continue
+			else:
+				msg += "Disk space for "
+		if param is not None and fsname != param.rstrip("/"):
+			continue
+		
+		avail = snmpget("1.3.6.1.4.1.789.1.5.4.1.31", i)
+		usage = int(snmpget("1.3.6.1.4.1.789.1.5.4.1.6", i))
+		msg += "{0}: {1}% in use ({2} kB free)".format(
+			fsname,
+			usage,
+			avail
+		)
+		
+		w = 85 if threshold_warn is None else threshold_warn
+		c = 95 if threshold_crit is None else threshold_crit
+		if usage >= c:
+			criticals.append(msg)
+		elif usage >= w:
+			warnings.append(msg)
+		else:
+			oks.append(msg)
+
+@check
+def space_aggr():
+	space_check((3, 4))
+
+@check
+def space_snap():
+	space_check("snapres")
+
+@check
+def space_vol():
+	space_check((1, 2, 5))
+
 @check
 def temperature():
 	temp_ok = snmpget("1.3.6.1.4.1.789.1.2.4.1.0") == "1"
@@ -263,6 +327,7 @@ if __name__ == "__main__":
 	args = parser.parse_args()
 	community = args.snmp_community
 	host = args.host
+	param = args.param
 	threshold_warn = args.threshold_warn
 	threshold_crit = args.threshold_crit
 	
