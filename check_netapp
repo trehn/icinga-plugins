@@ -269,7 +269,7 @@ if __name__ == "__main__":
 	try:
 		check_map[args.check]()
 	except KeyError:
-		print("Invalid check type: " + check)
+		print("Invalid check type: " + args.check)
 	
 	if criticals:
 		print("\n".join(criticals))
