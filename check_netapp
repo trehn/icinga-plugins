@@ -117,7 +117,7 @@ def run(command):
 		print(e.output)
 		exit(UNKNOWN)
 
-def snmpindices(oid):
+def snmpwalk(oid):
 	return run(
 		"snmpwalk -Oqv -v 2c -c {0} {1} {2}".format(
 			community,
@@ -182,7 +182,7 @@ def cpu_load():
 
 @check
 def dedup():
-	ids = snmpindices("1.3.6.1.4.1.789.1.23.2.1.1")
+	ids = map(str, range(1, len(snmpwalk("1.3.6.1.4.1.789.1.23.2.1.1"))+1))
 	oid_prefix = "1.3.6.1.4.1.789.1.23.2.1"
 	for i in ids:
 		vol = snmpget(oid_prefix, "2", i)
@@ -269,7 +269,7 @@ def power():
 		criticals.append(msg)
 
 def space_check(type_filter):
-	ids = snmpindices("1.3.6.1.4.1.789.1.5.4.1.1")
+	ids = map(str, range(1, len(snmpwalk("1.3.6.1.4.1.789.1.5.4.1.1"))+1))
 	for i in ids:
 		fstype = int(snmpget("1.3.6.1.4.1.789.1.5.4.1.23", i))
 		fsname = snmpget("1.3.6.1.4.1.789.1.5.4.1.2", i).rstrip("/")
@@ -327,7 +327,7 @@ def parse_temp(input_string, unit):
 	return map(int, temps)
 
 def temp(unit):
-	ids = snmpindices("1.3.6.1.4.1.789.1.21.1.2.1.1")
+	ids = map(str, range(1, len(snmpwalk("1.3.6.1.4.1.789.1.21.1.2.1.1"))+1))
 	for i in ids:
 		temp_data_under_c = parse_temp(
 			snmpget("1.3.6.1.4.1.789.1.21.1.2.1.28", i),
