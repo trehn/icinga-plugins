@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 # 
 # Copyright (c) 2012, Torsten Rehn <torsten@rehn.tel>
 # 
@@ -52,7 +53,8 @@ valid check types (and threshold defaults):
                     a single volume/aggregate; w:85 c:95)
   space_vol         Free disk space in all volumes (give volume name with
                     -p to check only a single volume; w:85 c:95)
-  temperature       Temperature status
+  temp_c            Temperature status (output in Celsius)
+  temp_f            Temperature status (output in Fahrenheit)
 """
 
 parser = ArgumentParser(
@@ -315,13 +317,69 @@ def space_snap():
 def space_vol():
 	space_check((1, 2, 5))
 
-@check
-def temperature():
-	temp_ok = snmpget("1.3.6.1.4.1.789.1.2.4.1.0") == "1"
-	if temp_ok:
-		oks.append("Temperature is within recommended range.")
+def parse_temp(input_string, unit):
+	temps = input_string.split(",")
+	temps = [t.strip() for t in temps]
+	if unit == "F":
+		temps = [t.split()[1].rstrip(")").lstrip("(").rstrip("F") for t in temps]
 	else:
-		criticals.append("Temperature is outside recommended range.")
+		temps = [t.split()[0].rstrip("C") for t in temps]
+	return map(int, temps)
+
+def temp(unit):
+	ids = snmpindices("1.3.6.1.4.1.789.1.21.1.2.1.1")
+	for i in ids:
+		temp_data_under_c = parse_temp(
+			snmpget("1.3.6.1.4.1.789.1.21.1.2.1.28", i),
+			unit
+		)
+		temp_data_under_w = parse_temp(
+			snmpget("1.3.6.1.4.1.789.1.21.1.2.1.29", i),
+			unit
+		)
+		temp_data_current = parse_temp(
+			snmpget("1.3.6.1.4.1.789.1.21.1.2.1.25", i),
+			unit
+		)
+		temp_data_over_w = parse_temp(
+			snmpget("1.3.6.1.4.1.789.1.21.1.2.1.27", i),
+			unit
+		)
+		temp_data_over_c = parse_temp(
+			snmpget("1.3.6.1.4.1.789.1.21.1.2.1.26", i),
+			unit
+		)
+		
+		msg = "Ambient: {0}°{2}, internal sensors: {1}°{2}".format(
+			temp_data_current[0],
+			temp_data_current[1],
+			unit
+		)
+		for tempval in temp_data_current[2:]:
+			msg += ", " + str(tempval) + "°" + unit
+		
+		oks.append(msg)
+		
+		for i in range(len(temp_data_current)):
+			current = temp_data_current[i]
+			under_c = temp_data_under_c[i]
+			under_w = temp_data_under_w[i]
+			over_c = temp_data_over_c[i]
+			over_w = temp_data_over_w[i]
+			if current <= under_c or current >= over_c:
+				criticals.append(msg)
+				break
+			elif current <= under_w or current >= over_w:
+				if len(warnings) == 0:
+					warnings.append(msg)
+
+@check
+def temp_c():
+	return temp("C")
+
+@check
+def temp_f():
+	return temp("F")
 
 if __name__ == "__main__":
 	args = parser.parse_args()
