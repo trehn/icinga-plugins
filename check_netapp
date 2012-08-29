@@ -38,6 +38,7 @@ criticals = []
 check_type_list = """
 valid check types (and threshold defaults):
 
+  autosupport       AutoSupport status
   cluster           HA status
   cpu_load          CPU load percentage (w:85 c:95)
   dedup             Last SIS run status for all volumes
@@ -140,6 +141,27 @@ check_map = {}
 
 def check(check):
     check_map[check.__name__] = check
+
+@check
+def autosupport():
+    status = int(snmpget('1.3.6.1.4.1.789.1.2.7.1.0'))
+    msg = snmpget('1.3.6.1.4.1.789.1.2.7.2.0')
+    if status != 1:
+        reason_map = {
+            2: 'SMTP failure',
+            3: 'POST failure',
+            4: 'SMTP+POST failure',
+        }
+        try:
+            reason = reason_map[status]
+        except KeyError:
+            reason = 'Unknown failure'
+        criticals.append('{0}: {1}'.format(
+            reason,
+            msg,
+        ))
+    else:
+        oks.append(msg)
 
 @check
 def cluster():
