@@ -1,0 +1,120 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# 
+# Copyright (c) 2012, Torsten Rehn <torsten@rehn.tel>
+# 
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above 
+# copyright notice and this permission notice appear in all copies.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
+from json import loads
+from sys import exit
+from urllib2 import urlopen, URLError
+
+OK = 0
+WARNING = 1
+CRITICAL = 2
+UNKNOWN = 3
+
+check_type_list = """
+valid check types:
+
+  heap              Heap memory usage
+  permgen           PermGen memory usage
+"""
+
+parser = ArgumentParser(
+    prog="check_jolokia",
+    description="Icinga/Nagios plugin to check various values " + \
+                "returned by a jolokia agent",
+    epilog=check_type_list,
+    formatter_class=RawDescriptionHelpFormatter,
+)
+
+parser.add_argument("-b", "--baseurl",
+    type=str,
+    metavar="URL",
+    dest='baseurl',
+    default="http://localhost:8080/jolokia",
+    help="base URL (default: http://localhost:8080/jolokia)",
+)
+
+parser.add_argument("-t", "--type",
+    type=str,
+    metavar="TYPE",
+    dest='check',
+    default="heap",
+    help="check type, see below for valid options (default: heap)",
+)
+
+parser.add_argument("-w", "--warning",
+    type=int,
+    metavar="THRESHOLD",
+    dest='threshold_warn',
+    default=80,
+)
+
+parser.add_argument("-c", "--critical",
+    type=int,
+    metavar="THRESHOLD",
+    dest='threshold_crit',
+    default=90,
+)
+
+url_heap = "/read/java.lang:type=Memory/HeapMemoryUsage"
+url_permgen = "/read/java.lang:name=Perm%20Gen,type=MemoryPool/Usage"
+
+def download(url):
+    try:
+        json = urlopen(url)
+    except URLError as e:
+        print("failed to download data from {0}: {1}".format(
+            url,
+            e.reason,
+        ))
+        exit(UNKNOWN)
+    return loads(json.read())
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    
+    url = None
+    
+    if args.check == "heap":
+        data = download(args.baseurl + url_heap)
+    elif args.check == "permgen":
+        data = download(args.baseurl + url_permgen)
+    else:
+        print("Invalid check type")
+        exit(UNKNOWN)
+        
+    try:
+        mem_max = data['value']['max']
+        mem_used = data['value']['used']
+    except KeyError:
+        print("received invalid data from jolokia: {}".format(data))
+        exit(UNKNOWN)
+    mem_max_mb = mem_max / 1024 / 1024
+    mem_used_mb = mem_used / 1024 / 1024
+    mem_used_percent = int(100.0 * mem_used / mem_max)
+    print("using {} MB out of {} MB ({}%)".format(
+        mem_used_mb,
+        mem_max_mb,
+        mem_used_percent,
+    ))
+    if mem_used_percent > args.threshold_crit:
+        exit(CRITICAL)
+    elif mem_used_percent > args.threshold_warn:
+        exit(WARNING)
+    else:
+        exit(OK)
