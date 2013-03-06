@@ -1,0 +1,61 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2013, Torsten Rehn <torsten@rehn.tel>
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+
+import subprocess
+import sys
+
+CMD_HOST_UUIDS = "xe host-list | tr -d '[:blank:]' | " + \
+                 "grep '^uuid(RO)' | cut -d ':' -f2"
+
+CMD_HOST_MEMORY = "xe host-param-list uuid=%s | tr -d '[:blank:]' | " + \
+                  "grep -E '^memory-(total|free-computed)' | cut -d ':' -f2"
+
+OK = 0
+WARNING = 1
+CRITICAL = 2
+
+THRESHOLD_CRIT = 1.5  # GiB, multiplied by server count
+
+
+def run(cmd):
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    return p.stdout.read().strip().split()
+
+if __name__ == '__main__':
+    total = 0.0
+    free = 0.0
+
+    host_uuids = run(CMD_HOST_UUIDS)
+
+    for uuid in host_uuids:
+        memstats = run(CMD_HOST_MEMORY % uuid)
+        total += int(memstats[0])
+        free += int(memstats[1])
+
+    free_percent = free / (total / 100)
+    free_gb = free / 1024 / 1024 / 1024
+    total_gb = total / 1024 / 1024 / 1024
+
+    print "%.1f%% free (%.2f GiB out of %.2f GiB)" % \
+        (free_percent, free_gb, total_gb)
+
+    if free_gb < (THRESHOLD_CRIT * len(host_uuids)):
+        sys.exit(CRITICAL)
+    elif free_percent < (100.0 / len(host_uuids)):
+        sys.exit(WARNING)
+    else:
+        sys.exit(OK)
