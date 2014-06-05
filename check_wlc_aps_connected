@@ -1,0 +1,51 @@
+#!/bin/bash
+#
+# Copyright (c) 2014, Torsten Rehn <torsten@rehn.email>
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+#
+# Checks the number of access points connected to a Cisco Wireless
+# Controller. Tested with WLC 2504.
+#
+# Usage: check_wlc_aps_connected <IP> <SNMP COMMUNITY> <EXPECTED NUMBER OF APs>
+#
+
+IP=$1
+COMMUNITY=$2
+SHOULD=$3
+
+OK=0
+WARNING=1
+CRITICAL=2
+
+APS=`snmpwalk -v 2c -c $2 -O qvT $1 1.3.6.1.4.1.9.9.513.1.1.1.1.5`
+if [[ $APS == "No Such Instance currently exists at this OID" ]]; then
+    AP_COUNT=0
+else
+    AP_COUNT=`echo "$APS" | wc -l`
+fi
+
+echo "$AP_COUNT out of $SHOULD access points connected"
+
+if [[ $AP_COUNT > 0 ]]; then
+    echo "$APS" | sort
+fi
+
+if [[ $AP_COUNT == $SHOULD ]]; then
+    exit $OK
+elif [[ $AP_COUNT > $SHOULD ]]; then
+    exit $WARNING
+else
+    exit $CRITICAL
+fi
