@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# 
-# Copyright (c) 2012, Torsten Rehn <torsten@rehn.tel>
-# 
+#
+# Copyright (c) 2012, 2015 Torsten Rehn <torsten@rehn.email>
+#
 # Permission to use, copy, modify, and/or distribute this software for any
-# purpose with or without fee is hereby granted, provided that the above 
+# purpose with or without fee is hereby granted, provided that the above
 # copyright notice and this permission notice appear in all copies.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
 # WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
 # MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
@@ -71,6 +71,12 @@ parser.add_argument('host',
     help='target hostname or IP address',
 )
 
+parser.add_argument('--cluster',
+    action='store_true',
+    dest='cluster',
+    help='Filer is running Cluster Mode (not 7-mode)',
+)
+
 parser.add_argument('-s', '--community',
     type=str,
     metavar='COMMUNTIY',
@@ -106,6 +112,7 @@ parser.add_argument('-c', '--critical',
     dest='threshold_crit',
 )
 
+
 def run(command):
     try:
         return check_output(
@@ -118,6 +125,7 @@ def run(command):
         print(e.output)
         exit(UNKNOWN)
 
+
 def snmpwalk(oid):
     return run(
         'snmpwalk -Oqv -v 2c -c {0} {1} {2}'.format(
@@ -126,6 +134,7 @@ def snmpwalk(oid):
             oid,
         )
     ).split('\n')
+
 
 def snmpget(*args):
     oid = '.'.join(args)
@@ -137,13 +146,16 @@ def snmpget(*args):
         )
     ).strip('"')
 
+
 check_map = {}
+
 
 def check(check):
     check_map[check.__name__] = check
 
+
 @check
-def autosupport():
+def autosupport(cluster):
     status = int(snmpget('1.3.6.1.4.1.789.1.2.7.1.0'))
     msg = snmpget('1.3.6.1.4.1.789.1.2.7.2.0')
     if status != 1:
@@ -163,40 +175,72 @@ def autosupport():
     else:
         oks.append(msg)
 
-@check
-def cluster():
-    status = int(snmpget('1.3.6.1.4.1.789.1.2.3.2.0'))
-    if status == 1:
-        criticals.append('Node is dead')
-    elif status == 2:
-        oks.append('Node can take over')
-    elif status == 3:
-        reason_code = int(snmpget('1.3.6.1.4.1.789.1.2.3.3.0'))
-        reason_map = {
-            3: 'disabled by operator',
-            4: 'interconnect offline',
-            5: 'disabled by partner',
-            6: 'takeover failed',
-            7: 'mailbox degraded',
-            8: 'partner mailbox uninitialized',
-            9: 'mailbox version mismatch',
-            10: 'NVRAM size mismatch',
-            11: 'kernel version mismatch',
-            12: 'partner booting up',
-            13: 'parnter performing revert',
-            14: 'performing revert',
-            15: 'partner requested takeover',
-            16: 'already in taken over mode',
-            17: 'NVRAM log unsynchronized',
-            18: 'backup mailbox problems',
-        }
-        reason = reason_map.get(reason_code, 'unknown reason')
-        criticals.append('Cannot take over: ' + reason)
-    elif status == 4:
-        warnings.append('Takeover in effect')
 
 @check
-def cpu_load():
+def cluster(cluster):
+    if cluster:
+        ha_settings = {
+            1: "HA not configured/licensed",
+            2: "enabled",
+            3: "disabled",
+            4: "takeover by partner disabled",
+            5: "this node has been taken over",
+        }
+        ha_states = {
+            1: "dead",
+            2: "can take over",
+            3: "cannot take over",
+            4: "takeover of other node in effect",
+            5: "partial giveback",
+        }
+        node_names = [n.strip("\"") for n in snmpwalk("1.3.6.1.4.1.789.1.21.2.1.1")]
+        settings = [int(s) for s in snmpwalk("1.3.6.1.4.1.789.1.21.2.1.3")]
+        states = [int(s) for s in snmpwalk("1.3.6.1.4.1.789.1.21.2.1.4")]
+        for node, setting, state in zip(node_names, settings, states):
+            if setting == 2:
+                oks.append("{} HA setting: {}".format(node, ha_settings[setting]))
+            else:
+                warnings.append("{} HA setting: {}".format(node, ha_settings[setting]))
+            if state == 2:
+                oks.append("{} HA status: {}".format(node, ha_states[state]))
+            elif state == 4:
+                warnings.append("{} HA status: {}".format(node, ha_states[state]))
+            else:
+                criticals.append("{} HA status: {}".format(node, ha_states[state]))
+    else:
+        status = int(snmpget('1.3.6.1.4.1.789.1.2.3.2.0'))
+        if status == 1:
+            criticals.append('Node is dead')
+        elif status == 2:
+            oks.append('Node can take over')
+        elif status == 3:
+            reason_code = int(snmpget('1.3.6.1.4.1.789.1.2.3.3.0'))
+            reason_map = {
+                3: 'disabled by operator',
+                4: 'interconnect offline',
+                5: 'disabled by partner',
+                6: 'takeover failed',
+                7: 'mailbox degraded',
+                8: 'partner mailbox uninitialized',
+                9: 'mailbox version mismatch',
+                10: 'NVRAM size mismatch',
+                11: 'kernel version mismatch',
+                12: 'partner booting up',
+                13: 'parnter performing revert',
+                14: 'performing revert',
+                15: 'partner requested takeover',
+                16: 'already in taken over mode',
+                17: 'NVRAM log unsynchronized',
+                18: 'backup mailbox problems',
+            }
+            reason = reason_map.get(reason_code, 'unknown reason')
+            criticals.append('Cannot take over: ' + reason)
+        elif status == 4:
+            warnings.append('Takeover in effect')
+
+
+@check
+def cpu_load(cluster):
     load = int(snmpget('1.3.6.1.4.1.789.1.2.1.3.0'))
     load_msg = 'CPU load: {0}%'.format(load)
     w = 85 if threshold_warn is None else threshold_warn
@@ -208,31 +252,45 @@ def cpu_load():
     else:
         oks.append(load_msg)
 
-@check
-def dedup():
-    ids = map(str, range(1, len(snmpwalk('1.3.6.1.4.1.789.1.23.2.1.1')) + 1))
-    oid_prefix = '1.3.6.1.4.1.789.1.23.2.1'
-    for i in ids:
-        vol = snmpget(oid_prefix, '2', i)
-        end = snmpget(oid_prefix, '9', i)
-        size = snmpget(oid_prefix, '13', i)
-        state = snmpget(oid_prefix, '24', i)
-        error = snmpget(oid_prefix, '12', i)
-        if state == 'Success':
-            oks.append('{0}: COMPLETED SUCCESSFULLY @ {1} ({2} kB)'.format(
-                vol,
-                end,
-                size,
-            ))
-        else:
-            criticals.append('{0}: FAILED @ {1} ({2})'.format(
-                vol,
-                end,
-                error,
-            ))
 
 @check
-def disks():
+def dedup(cluster):
+    if cluster:
+        ids = snmpwalk('1.3.6.1.4.1.789.1.23.2.1.1')
+        for sis_id in ids:
+            svm = snmpget('1.3.6.1.4.1.789.1.23.2.1.16', sis_id)
+            vol = snmpget('1.3.6.1.4.1.789.1.23.2.1.2', sis_id)
+            error = snmpget('1.3.6.1.4.1.789.1.23.2.1.12', sis_id).strip()
+            status = snmpget('1.3.6.1.4.1.789.1.23.2.1.24', sis_id).strip()
+            if error:
+                criticals.append("{} {}: {} ({})".format(svm, vol, status, error))
+            else:
+                oks.append("{} {}: {}".format(svm, vol, status))
+    else:
+        ids = map(str, range(1, len(snmpwalk('1.3.6.1.4.1.789.1.23.2.1.1')) + 1))
+        oid_prefix = '1.3.6.1.4.1.789.1.23.2.1'
+        for i in ids:
+            vol = snmpget(oid_prefix, '2', i)
+            end = snmpget(oid_prefix, '9', i)
+            size = snmpget(oid_prefix, '13', i)
+            state = snmpget(oid_prefix, '24', i)
+            error = snmpget(oid_prefix, '12', i)
+            if state == 'Success':
+                oks.append('{0}: COMPLETED SUCCESSFULLY @ {1} ({2} kB)'.format(
+                    vol,
+                    end,
+                    size,
+                ))
+            else:
+                criticals.append('{0}: FAILED @ {1} ({2})'.format(
+                    vol,
+                    end,
+                    error,
+                ))
+
+
+@check
+def disks(cluster):
     failed_count = int(snmpget('1.3.6.1.4.1.789.1.6.4.7.0'))
     prefail_count = int(snmpget('1.3.6.1.4.1.789.1.6.4.11.0'))
     reconn_count = int(snmpget('1.3.6.1.4.1.789.1.6.4.3.0'))
@@ -245,17 +303,29 @@ def disks():
         warnings.append('{0} disk(s) prefailed'.format(prefail_count))
     oks.append(msg)
 
-@check
-def fans():
-    count = int(snmpget('1.3.6.1.4.1.789.1.2.4.2.0'))
-    msg = snmpget('1.3.6.1.4.1.789.1.2.4.3.0')
-    if count == 0:
-        oks.append(msg)
-    else:
-        criticals.append(msg)
 
 @check
-def globalstatus():
+def fans(cluster):
+    if cluster:
+        node_names = [n.strip("\"") for n in snmpwalk(".1.3.6.1.4.1.789.1.25.2.1.1")]
+        msgs = [m.strip("\"") for m in snmpwalk(".1.3.6.1.4.1.789.1.25.2.1.20")]
+        counts = [int(c) for c in snmpwalk(".1.3.6.1.4.1.789.1.25.2.1.19")]
+        for node, msg, count in zip(node_names, msgs, counts):
+            if count == 0:
+                oks.append("{}: {}".format(node, msg))
+            else:
+                criticals.append("{}: {}".format(node, msg))
+    else:
+        count = int(snmpget('1.3.6.1.4.1.789.1.2.4.2.0'))
+        msg = snmpget('1.3.6.1.4.1.789.1.2.4.3.0')
+        if count == 0:
+            oks.append(msg)
+        else:
+            criticals.append(msg)
+
+
+@check
+def globalstatus(cluster):
     status = snmpget('1.3.6.1.4.1.789.1.2.2.4.0')
     status_msg = snmpget('1.3.6.1.4.1.789.1.2.2.25.0')
     if status == '3':
@@ -265,39 +335,58 @@ def globalstatus():
     else:
         criticals.append(status_msg)
 
-@check
-def nvram_battery():
-    status = int(snmpget('1.3.6.1.4.1.789.1.2.5.1.0'))
-    if status == 1:
-        oks.append('Battery is OK')
-    elif status == 2:
-        warnings.append('Battery is partially discharged')
-    elif status == 3:
-        criticals.append('Battery is fully discharged')
-    elif status == 4:
-        print('Battery is not present')
-    elif status == 5:
-        warnings.append('Battery is near end of life')
-    elif status == 6:
-        criticals.append('Battery is at end of life')
-    elif status == 8:
-        warnings.append('Battery is over charged')
-    elif status == 9:
-        oks.append('Battery is fully charged')
-    else:
-        print('Battery status is unknown')
 
 @check
-def power():
-    count = int(snmpget('1.3.6.1.4.1.789.1.2.4.4.0'))
-    msg = snmpget('1.3.6.1.4.1.789.1.2.4.5.0')
-    if count == 0:
-        oks.append(msg)
+def nvram_battery(cluster):
+    if cluster:
+        node_names = [n.strip("\"") for n in snmpwalk(".1.3.6.1.4.1.789.1.25.2.1.1")]
+        battery_status = [int(s) for s in snmpwalk(".1.3.6.1.4.1.789.1.25.2.1.17")]
+        state = zip(node_names, battery_status)
     else:
-        criticals.append(msg)
+        state = [("node", int(snmpget('1.3.6.1.4.1.789.1.2.5.1.0')))]
+    for node_name, status in state:
+        if status == 1:
+            oks.append('{}: Battery is OK'.format(node_name))
+        elif status == 2:
+            warnings.append('{}: Battery is partially discharged'.format(node_name))
+        elif status == 3:
+            criticals.append('{}: Battery is fully discharged'.format(node_name))
+        elif status == 4:
+            criticals.append('{}: Battery is not present'.format(node_name))
+        elif status == 5:
+            warnings.append('{}: Battery is near end of life'.format(node_name))
+        elif status == 6:
+            criticals.append('{}: Battery is at end of life'.format(node_name))
+        elif status == 8:
+            warnings.append('{}: Battery is over charged'.format(node_name))
+        elif status == 9:
+            oks.append('{}: Battery is fully charged'.format(node_name))
+        else:
+            criticals.append('{}: Battery status is unknown'.format(node_name))
+
+
+@check
+def power(cluster):
+    if cluster:
+        node_names = [n.strip("\"") for n in snmpwalk(".1.3.6.1.4.1.789.1.25.2.1.1")]
+        msgs = [m.strip("\"") for m in snmpwalk(".1.3.6.1.4.1.789.1.25.2.1.22")]
+        counts = [int(c) for c in snmpwalk(".1.3.6.1.4.1.789.1.25.2.1.21")]
+        for node, msg, count in zip(node_names, msgs, counts):
+            if count == 0:
+                oks.append("{}: {}".format(node, msg))
+            else:
+                criticals.append("{}: {}".format(node, msg))
+    else:
+        count = int(snmpget('1.3.6.1.4.1.789.1.2.4.4.0'))
+        msg = snmpget('1.3.6.1.4.1.789.1.2.4.5.0')
+        if count == 0:
+            oks.append(msg)
+        else:
+            criticals.append(msg)
+
 
 def space_check(type_filter):
-    ids = map(str, range(1, len(snmpwalk('1.3.6.1.4.1.789.1.5.4.1.1')) + 1))
+    ids = snmpwalk('1.3.6.1.4.1.789.1.5.4.1.1')
     for i in ids:
         fstype = int(snmpget('1.3.6.1.4.1.789.1.5.4.1.23', i))
         fsname = snmpget('1.3.6.1.4.1.789.1.5.4.1.2', i).rstrip('/')
@@ -315,7 +404,7 @@ def space_check(type_filter):
                 msg += 'Disk space for '
         if param is not None and fsname != param.rstrip('/'):
             continue
-        
+
         avail = snmpget('1.3.6.1.4.1.789.1.5.4.1.31', i)
         usage = int(snmpget('1.3.6.1.4.1.789.1.5.4.1.6', i))
         msg += '{0}: {1}% in use ({2} kB free)'.format(
@@ -323,7 +412,7 @@ def space_check(type_filter):
             usage,
             avail,
         )
-        
+
         w = 85 if threshold_warn is None else threshold_warn
         c = 95 if threshold_crit is None else threshold_crit
         if usage >= c:
@@ -333,17 +422,21 @@ def space_check(type_filter):
         else:
             oks.append(msg)
 
+
 @check
-def space_aggr():
+def space_aggr(cluster):
     space_check((3, 4))
 
-@check
-def space_snap():
-    space_check('snapres')
 
 @check
-def space_vol():
+def space_snap(cluster):
+    space_check('snapres')
+
+
+@check
+def space_vol(cluster):
     space_check((1, 2, 5))
+
 
 def parse_temp(input_string, unit):
     temps = input_string.split(',')
@@ -353,6 +446,7 @@ def parse_temp(input_string, unit):
     else:
         temps = [t.split()[0].rstrip('C') for t in temps]
     return map(int, temps)
+
 
 def temp(unit):
     ids = map(str, range(1, len(snmpwalk('1.3.6.1.4.1.789.1.21.1.2.1.1'))+1))
@@ -377,7 +471,7 @@ def temp(unit):
             snmpget('1.3.6.1.4.1.789.1.21.1.2.1.26', i),
             unit,
         )
-        
+
         msg = 'Ambient: {0}°{2}, internal sensors: {1}°{2}'.format(
             temp_data_current[0],
             temp_data_current[1],
@@ -385,9 +479,9 @@ def temp(unit):
         )
         for tempval in temp_data_current[2:]:
             msg += ', ' + str(tempval) + '°' + unit
-        
+
         oks.append(msg)
-        
+
         for i in range(len(temp_data_current)):
             current = temp_data_current[i]
             under_c = temp_data_under_c[i]
@@ -401,13 +495,16 @@ def temp(unit):
                 if len(warnings) == 0:
                     warnings.append(msg)
 
-@check
-def temp_c():
-    return temp('C')
 
 @check
-def temp_f():
+def temp_c(cluster):
+    return temp('C')
+
+
+@check
+def temp_f(cluster):
     return temp('F')
+
 
 if __name__ == '__main__':
     args = parser.parse_args()
@@ -416,12 +513,12 @@ if __name__ == '__main__':
     param = args.param
     threshold_warn = args.threshold_warn
     threshold_crit = args.threshold_crit
-    
+
     try:
-        check_map[args.check]()
+        check_map[args.check](args.cluster)
     except KeyError:
         print('Invalid check type: ' + args.check)
-    
+
     if criticals:
         print('\n'.join(criticals))
         exit(CRITICAL)
